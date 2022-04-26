@@ -1,14 +1,11 @@
-
-
 import pandas as pd
 import numpy as np
-
-
+import random
 
 from keras.models import Sequential
 from keras.layers import LSTM
 from keras.layers import Dense
-
+from tensorflow.keras.optimizers import Adam
 # --------------------
 def getData(path):
   df = pd.read_csv(path, header=None)
@@ -42,30 +39,35 @@ def prepareTrain(df):
   return df_train
 
 def getLabel(df):
-  ## get buy time
-  dfb = df[df['diff520']<-0.03]
+  df['percent'] = (df['close']-df['open'])/df['open']
+  
+  ## get buy time 
+  # dfb = df[df['diff520']<-0.02]
+  dfb = df[(df['close']<df['MA60'])&(df['close']>df['MA5'])]
+  dfb2 = df[df['percent']<-0.005]
   b = list(dfb.index)
+  b2 = list(dfb2.index)
   b.append(0)
   listb = getbuy(b)
+  listb2 = getbuy(b2)
+  for i in listb2:
+    listb.append(i)
+
+  listb.sort()
+
   # print(listb)
   ## get sell time
-  dfs = df[(df['MA5']>df['MA20']) & (df['MA20']>df['MA60'])]
-  
+  dfs = df[df['percent']>0.005]
+
   s = list(dfs.index)
   s.append(0)
   lists = getsell(s)
-  # print(lists)
-
-  listb, lists = pick(listb,lists)
 
   print(len(listb))
   print(listb)
   print(len(lists))
   print(lists)
-  # df['action']= np.zeros(df.shape[0])
-  # df['action'][listb]=1
-  # df['action'][lists]=-1
-  # df[(df['action']==1) | (df['action']==-1)]
+
   return listb, lists
 
 def getbuy(l):
@@ -107,9 +109,9 @@ def getsell(random_list):
             # If it is not append the count and restart counting
             retlist.append(count)
             ###
-            if count > 5:
+            # if count > 5:
               # print(random_list[i]-2)
-              selllist.append(random_list[i]-2)
+            selllist.append(random_list[i]-2)
               # df_action['action'][random_list[i]-count] = 1
             ###
             count = 1
@@ -148,24 +150,16 @@ def pick(b,s):
 
   return b2,s2
 
-def buildLstm(df):
-  # model = Sequential()
-  # model.add(LSTM(30, input_length=shape[1], input_dim=shape[2]))
-  # # output shape: (1, 1)
-  # model.add(Dense(1))
-  # model.compile(loss="mse", optimizer="adam")
-  # model.summary()
-
-  n_features = df.shape[1]
-
-  # define model
+def mlp(n_obs=6, n_action=3, n_hidden_layer=1, n_neuron_per_layer=32,
+        activation='relu', loss='mse'):
+  """ A multi-layer perceptron """
   model = Sequential()
-  model.add(LSTM(50, activation='relu', input_shape=(1, n_features)))
-  model.add(Dense(1))
-  model.compile(optimizer='adam', loss='mse')
-  # fit model
-  # model.fit(x_train, y_train, epochs=1000, verbose=1)
-  model.summary()
+  model.add(Dense(n_neuron_per_layer, input_dim=n_obs, activation=activation))
+  for _ in range(n_hidden_layer):
+    model.add(Dense(n_neuron_per_layer, activation=activation))
+  model.add(Dense(n_action, activation='linear'))
+  model.compile(loss=loss, optimizer=Adam())
+  print(model.summary())
   return model
 
 if __name__ == '__main__':
@@ -198,93 +192,115 @@ if __name__ == '__main__':
     train_temp = prepareTrain(train)
     # print(train.head(20))
     listb, lists = getLabel(train_temp)
-    train['action']= np.zeros(train.shape[0])
-    train['action'][listb]=1
-    train['action'][lists]=-1
-    train[(train['action']==1) | (train['action']==-1)]
-    train=train[['open','high','low','close','rise','diff','action']]
-    print(train[(train['action']==1) | (train['action']==-1)])
+
+    print(len(listb))
+    print(len(lists))
+    df2=pd.DataFrame()
+
+    df2['long']=pd.DataFrame(np.zeros(train.shape[0]))
+    df2['long'][listb]=1
+    
+    df2['hold']=pd.DataFrame(np.ones(train.shape[0]))
+    df2['hold'][listb]=0
+    df2['hold'][lists]=0
+
+    df2['short']=pd.DataFrame(np.zeros(train.shape[0]))
+    df2['short'][lists]=1
+
+    train=train[['open','high','low','close','rise','diff']]
 
     test = getData(args.testing)
-    print(test)
+    # print(test)
 
-    trainX = train.drop('action', 1)
+    # print(train[train['diff']<-1.5].index)
 
-    trainY = train['action']
+    trainX = train
+    trainY = df2
+    
+    # print(trainY.shape)
+    # print(trainY)
+    # print(trainY['long'].value_counts())
+    # print(trainY['hold'].value_counts())
+    # print(trainY['short'].value_counts())
+
     testX = test.copy()
     # trainX.shape
-    print(trainX.shape)
-    print(trainY.shape)
-    print(testX.shape)
+    # print(trainX.shape)
+    # print(trainY.shape)
+    # print(testX.shape)
+    ans = np.zeros(testX.shape[0])
 
-    trainX = np.reshape(trainX, (trainX.shape[0], 1, trainX.shape[1]))
-    testX = np.reshape(testX, (testX.shape[0], 1, testX.shape[1]))
 
-    model = buildLstm(trainX)
-    model.fit(trainX, trainY, epochs=300, verbose=1)
-    # train_data = data[:, :3526]
-    # test_data = data[:, 3526:]
-    # print(train_data)
-    # # print(data)
+    ## prepare data for nn
+    trainX=trainX.to_numpy()
+    testX=testX.to_numpy()
+    # trainX = np.reshape(trainX, (trainX.shape[0], 1, trainX.shape[1]))
+    # testX = np.reshape(testX, (testX.shape[0], 1, testX.shape[1]))
+    # model = buildLstm(trainX)
+    model = mlp()
+    # model = buildModel(trainX)
+    model.fit(trainX, trainY, epochs=10, verbose=1)
 
-    # env = TradingEnv(train_data, 1000)
-    # state_size = env.observation_space.shape
-    # print(state_size)
-    # action_size = env.action_space.n
-    # print(action_size)
-    # agent = DQNAgent(state_size, action_size)
-    # print(agent)
-    # scaler = get_scaler(env)
-    # print(scaler)
-
-    # portfolio_value = []
-
-    # if args.mode == 'test':
-    #   # remake the env with test data
-    #   env = TradingEnv(test_data, args.initial_invest)
-    #   # load trained weights
-    #   agent.load(args.weights)
-    #   # when test, the timestamp is same as time when weights was trained
-    #   timestamp = re.findall(r'\d{12}', args.weights)[0]
-
-    # # for e in range(args.episode):
-    # for e in range(5):
-    #   state = env.reset()
-    #   state = scaler.transform([state])
-    #   for time in range(env.n_step):
-    #     action = agent.act(state)
-    #     next_state, reward, done, info = env.step(action)
-    #     next_state = scaler.transform([next_state])
-    #     if args.mode == 'train':
-    #       agent.remember(state, action, reward, next_state, done)
-    #     state = next_state
-    #     if done:
-    #       print("episode: {}/{}, episode end value: {}".format(
-    #         e + 1, 5, info['cur_val']))
-    #       portfolio_value.append(info['cur_val']) # append episode end portfolio value
-    #       break
-    #     if args.mode == 'train' and len(agent.memory) > 32:
-    #     # if args.mode == 'train':
-    #       agent.replay(32)
-    #   if args.mode == 'train' and (e + 1) % 10 == 0:  # checkpoint weights
-    #     agent.save('weights/{}-dqn.h5'.format(timestamp))
-
-    # # save portfolio value history to disk
-    # with open('portfolio_val/{}-{}.p'.format(timestamp, args.mode), 'wb') as fp:
-    #   pickle.dump(portfolio_value, fp)
-
-# ----
-    # training_data = load_data(args.training)
-    # trader = Trader()
-    # trader.train(training_data)
+    ans_tmp=[]
     
-    # testing_data = load_data(args.testing)
-    # with open(args.output, 'w') as output_file:
-    #     for row in testing_data:
-    #         # We will perform your action as the open price in the next day.
-    #         action = trader.predict_action(row)
-    #         output_file.write(action)
+    ### predict####
+    p = model.predict(testX)
+    print(p)
+    # p[0][2]=2
+    for i in p:
+      # print(max(i))
+      t = i.tolist()
+      max_value = max(t)
+      max_index = t.index(max_value)
+      # print(max_index)
+      ans_tmp.append(max_index)
+      # print(max(t))
+    # print(ans_tmp)
+    ans_tmp =ans_tmp[:-1]
+    # output decision
+    lans = len(ans_tmp)
+    if ans_tmp.count(1) == lans:
+      ans_tmp[random.randint(0,lans)]=0
+    else:
+      actionList = []
+      actionIdx = []
+      for idx, val in enumerate(ans_tmp):
+        if val == 0:
+          actionList.append(val)
+          actionIdx.append(idx)
+        elif val == 2:
+          actionList.append(val)
+          actionIdx.append(idx) 
+      # print(actionIdx)
+      # print(actionList)
 
+      c = 0
 
-    #         # this is your option, you can leave it empty.
-    #         trader.re_training(i)
+      for i in range(len(actionList)):
+        if actionList[i] == 0:
+          c+=1
+          if c>1:
+            c-=1
+            actionList[i] = 1
+        elif actionList[i] == 2:
+          c-=1
+          if c < -1:
+            c+=1
+            actionList[i] =1
+      # print(actionList)
+
+      for i in range(len(actionList)):
+        if actionList[i]==1:
+          ans_tmp[actionIdx[i]] = 1
+
+      # print(ans_tmp)
+
+      for i in range(len(ans_tmp)):
+        ans_tmp[i] = ans_tmp[i]-1
+        ans_tmp[i] = -ans_tmp[i]
+
+      print(ans_tmp[:-1])
+
+      df_res = pd.DataFrame(ans_tmp[:-1])
+      df_res.to_csv(args.output, index=0)
+      print("output.csv generated!")
